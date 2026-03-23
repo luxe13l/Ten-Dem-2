@@ -177,7 +177,6 @@ class ChatWidget(QWidget):
         return frame
 
     def _create_selection_bar(self):
-        """Панель действий при выборе сообщений (Переслать / Удалить)"""
         self.selection_bar = QFrame()
         self.selection_bar.hide()
         self.selection_bar.setStyleSheet(
@@ -191,21 +190,18 @@ class ChatWidget(QWidget):
         layout.addWidget(self.selection_label)
         layout.addStretch()
 
-        # Кнопка ПЕРЕСЛАТЬ
         forward_btn = QPushButton("Переслать")
         forward_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         forward_btn.setStyleSheet(self._ghost_button_style(primary=True))
         forward_btn.clicked.connect(self.forward_selected_messages)
         layout.addWidget(forward_btn)
 
-        # Кнопка УДАЛИТЬ
         delete_btn = QPushButton("Удалить")
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_btn.setStyleSheet(self._ghost_button_style(primary=False))
         delete_btn.clicked.connect(self.delete_selected_messages)
         layout.addWidget(delete_btn)
 
-        # ❌ КНОПКУ "НАЗАД" УБРАЛИ — она не нужна
         cancel_btn = QPushButton("Отмена")
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet(self._ghost_button_style())
@@ -418,28 +414,24 @@ class ChatWidget(QWidget):
 
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_style())
-        reply_action = menu.addAction("Ответить")
-        pin_action = menu.addAction("Закрепить")
-        react_menu = menu.addMenu("Реакции")
+        
+        # ✅ UNICODE ИКОНКИ ДЛЯ МЕНЮ
+        reply_action = menu.addAction("↩ Ответить")
+        pin_action = menu.addAction("📌 Закрепить")
+        react_menu = menu.addMenu("😊 Реакции")
         react_menu.setStyleSheet(self._menu_style())
-        reply_action.setIcon(self._std_icon("SP_ArrowBack"))
-        pin_action.setIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icons", "attach.svg")))
-        react_menu.setIcon(self._std_icon("SP_DialogApplyButton"))
+        
         for emoji in QUICK_REACTIONS:
             action = react_menu.addAction(emoji)
             action.triggered.connect(lambda _, value=emoji, msg_id=message.id: self.apply_reaction(msg_id, value))
-        menu.addSeparator()
-        select_action = menu.addAction("Выбрать")
-        forward_action = menu.addAction("Переслать")
-        edit_action = menu.addAction("Изменить") if message.from_uid == self.current_user.uid else None
-        delete_action = menu.addAction("Удалить")
-        select_action.setIcon(self._std_icon("SP_DialogApplyButton"))
-        forward_action.setIcon(self._std_icon("SP_ArrowForward"))
-        if edit_action:
-            edit_action.setIcon(self._std_icon("SP_FileDialogContentsView"))
-        delete_action.setIcon(self._std_icon("SP_TrashIcon"))
-
+        
+        select_action = menu.addAction("✓ Выбрать")
+        forward_action = menu.addAction("→ Переслать")
+        edit_action = menu.addAction("✎ Изменить") if message.from_uid == self.current_user.uid else None
+        delete_action = menu.addAction("🗑 Удалить")
+        
         action = menu.exec(bubble.mapToGlobal(pos))
+        
         if action == reply_action:
             self.reply_to_message(message)
         elif action == pin_action:
@@ -456,7 +448,6 @@ class ChatWidget(QWidget):
         elif edit_action and action == edit_action:
             self.edit_message(message)
         elif action == delete_action:
-            # Для одиночного удаления через меню
             self.selected_message_ids = {message.id}
             self.delete_selected_messages()
 
@@ -541,9 +532,8 @@ class ChatWidget(QWidget):
         self.chat_updated.emit(self.contact.uid)
 
     def request_delete_message(self, message: Message):
-        # ✅ ВСЕГДА ПОКАЗЫВАЕМ ДИАЛОГ С ВЫБОРОМ "У МЕНЯ" / "У ВСЕХ"
         dialog = DeleteMessageDialog(
-            allow_for_everyone=True, 
+            allow_for_everyone=True,
             theme_name=getattr(self.current_user, "theme", "dark"),
             parent=self,
         )
@@ -564,19 +554,14 @@ class ChatWidget(QWidget):
         self._refresh_selection_widgets()
         self.chat_updated.emit(self.contact.uid)
 
-    # ============================================================
-    # МАССОВОЕ УДАЛЕНИЕ ВЫДЕЛЕННЫХ СООБЩЕНИЙ
-    # ============================================================
     def delete_selected_messages(self):
         if not self.selected_message_ids:
             QMessageBox.information(self, "Удаление", "Сначала выберите сообщения.")
             return
 
-        # ✅ МЫ ВСЕГДА ПОКАЗЫВАЕМ ВЫБОР "У МЕНЯ" / "У ВСЕХ"
-        # Не важно, свои сообщения или чужие. Пользователь сам решает.
-        
+        # ✅ ВСЕГДА ПОКАЗЫВАЕМ ВЫБОР "У МЕНЯ" / "У ВСЕХ"
         dialog = DeleteMessageDialog(
-            allow_for_everyone=True,  # Всегда разрешаем выбор
+            allow_for_everyone=True,
             theme_name=getattr(self.current_user, "theme", "dark"),
             parent=self,
         )
@@ -585,27 +570,20 @@ class ChatWidget(QWidget):
         
         for_everyone = (dialog.result_mode == "all")
         
-        # Удаляем циклом
         ids_to_remove = list(self.selected_message_ids)
         for msg_id in ids_to_remove:
             message = self._find_message(msg_id)
             if message:
-                # Вызываем функцию удаления из БД
-                # База данных сама решит, что можно удалить физически, а что пометить
                 delete_message_record(message.id, for_everyone=for_everyone, deleted_by=self.current_user.uid)
-                
-                # Удаляем из UI
                 bubble = self.message_widgets.pop(message.id, None)
                 if bubble:
                     bubble.deleteLater()
                 self.messages = [m for m in self.messages if m.id != message.id]
         
-        # Очищаем выделение
         self.selected_message_ids.clear()
         self.exit_selection_mode()
         self.empty_state.setVisible(not self.messages)
         self.chat_updated.emit(self.contact.uid)
-    # ============================================================
 
     def apply_reaction(self, message_id: str, emoji: str):
         reactions = toggle_reaction(message_id, emoji, self.current_user.uid)
@@ -671,14 +649,10 @@ class ChatWidget(QWidget):
     def on_attach_clicked(self):
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_style())
-        photo_action = menu.addAction("Фото")
-        video_action = menu.addAction("Видео")
-        poll_action = menu.addAction("Опрос")
-        file_action = menu.addAction("Файл")
-        photo_action.setIcon(self._std_icon("SP_FileIcon"))
-        video_action.setIcon(self._std_icon("SP_MediaPlay"))
-        poll_action.setIcon(self._std_icon("SP_DialogApplyButton"))
-        file_action.setIcon(self._std_icon("SP_FileLinkIcon"))
+        photo_action = menu.addAction("📷 Фото")
+        video_action = menu.addAction("🎥 Видео")
+        poll_action = menu.addAction("📊 Опрос")
+        file_action = menu.addAction("📎 Файл")
         action = menu.exec(self.attach_btn.mapToGlobal(self.attach_btn.rect().bottomLeft()))
         if action == photo_action:
             self.attach_photo()
@@ -787,20 +761,29 @@ class ChatWidget(QWidget):
         return MessageType.FILE
 
     def _menu_style(self):
+        # ✅ ЗАКРУГЛЁННОЕ МЕНЮ С ТЁМНЫМ ФОНОМ
         return f"""
         QMenu {{
-            background-color: {self.colors['bg_secondary']};
-            color: {self.colors['text_primary']};
+            background-color: #1C1C1D;
+            color: #FFFFFF;
             border: none;
-            border-radius: 18px;
-            padding: 8px;
+            border-radius: 14px;
+            padding: 6px;
         }}
         QMenu::item {{
             padding: 10px 16px;
-            border-radius: 14px;
+            border-radius: 10px;
+            color: #FFFFFF;
+            font-size: 14px;
+            background-color: transparent;
         }}
         QMenu::item:selected {{
-            background-color: {self.colors['bg_tertiary']};
+            background-color: #2C2C2E;
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: #2C2C2E;
+            margin: 4px 8px;
         }}
         """
 

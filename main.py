@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 # Загружаем переменные из .env
 load_dotenv()
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtGui import QIcon
@@ -21,13 +20,18 @@ from src.styles.themes import apply_theme
 from src.ui.registration_wizard import RegistrationWizard
 from src.ui.main_window import MainWindow
 
-
 main_window_ref = None
 APP_ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Логотип Ten Dem.png")
 
-
 def main():
     print("=== ЗАПУСК TEN DEM ===")
+    
+    # ✅ ПРОВЕРКА ИКОНОК ПРИ ЗАПУСКЕ
+    try:
+        from src.utils.icons import print_icon_status
+        print_icon_status()
+    except Exception as e:
+        print(f"⚠️ Не удалось проверить иконки: {e}")
     
     try:
         print("1. Инициализация Firebase...")
@@ -67,16 +71,14 @@ def main():
         input("Нажмите Enter...")
         sys.exit(1)
 
-
 def on_registration_complete(data, wizard, app):
     """Обработка завершения регистрации/входа"""
     global main_window_ref
-    
     print(f"✅ Регистрация завершена: {data}")
-    
+
     wizard.close()
     wizard.deleteLater()
-    
+
     from src.models.user import User
     current_user = User(
         uid=data.get('uid', '') or f"local-{uuid.uuid4().hex[:8]}",
@@ -106,24 +108,23 @@ def on_registration_complete(data, wizard, app):
                 'status': 'online',
             }
         )
-    
+
     print("7. Создание главного окна мессенджера...")
     main_window_ref = MainWindow(current_user)
     if os.path.exists(APP_ICON_PATH):
         main_window_ref.setWindowIcon(QIcon(APP_ICON_PATH))
-    
+
     print("8. Показ главного окна...")
     main_window_ref.show()
     main_window_ref.raise_()
     main_window_ref.activateWindow()
-    
+
     print(f"✅ Окно видно: {main_window_ref.isVisible()}")
-    
+
     print("9. Загрузка контактов...")
     main_window_ref.load_contacts()
-    
-    print("✅ Мессенджер запущен!")
 
+    print("✅ Мессенджер запущен!")
 
 if __name__ == "__main__":
     main()
