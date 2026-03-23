@@ -210,31 +210,38 @@ class MainWindow(QMainWindow):
         bottom.setContentsMargins(18, 0, 18, 26)
         bottom.addStretch()
 
-        # ✅ ИСПРАВЛЕНО: Кнопка идеально круглая
+        # ✅ КНОПКА СОЗДАНИЯ КОНТАКТА (ИДЕАЛЬНО КРУГЛАЯ)
         self.new_chat_button = QPushButton()
-        self.new_chat_button.setFixedSize(48, 48)
+        self.new_chat_button.setFixedSize(48, 48)  # Строго одинаковая ширина и высота
         self.new_chat_button.setIcon(QIcon("assets/icons/plus.svg"))
         self.new_chat_button.setIconSize(QSize(18, 18))
         self.new_chat_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # ЖЕСТКИЙ СТИЛЬ ДЛЯ КРУГА
         self.new_chat_button.setStyleSheet(
             f"""
             QPushButton {{
                 background-color: {self.colors['accent_primary']};
                 color: #0D0D0D;
                 border: none;
-                border-radius: 999px; /* ЖЕСТКИЙ КРУГ */
+                border-radius: 24px; /* Ровно половина от 48px = идеальный круг */
             }}
             QPushButton:hover {{
                 background-color: {self.colors['accent_hover']};
             }}
+            QPushButton:pressed {{
+                background-color: {self.colors.get('accent_pressed', self.colors['accent_primary'])};
+            }}
             """
         )
+        
+        # Тень для красоты
         shadow = QGraphicsDropShadowEffect(self.new_chat_button)
         shadow.setBlurRadius(22)
         shadow.setOffset(0, 4)
-        shadow.setColor(Qt.GlobalColor.transparent)
         shadow.setColor(self._shadow_color())
         self.new_chat_button.setGraphicsEffect(shadow)
+        
         self.new_chat_button.clicked.connect(self.open_create_menu)
         bottom.addWidget(self.new_chat_button, 0, Qt.AlignmentFlag.AlignBottom)
         layout.addLayout(bottom)
