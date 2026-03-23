@@ -10,7 +10,7 @@
       "status": "online",
       "last_seen": {
         "__type__": "datetime",
-        "value": "2026-03-23T20:05:05.219985"
+        "value": "2026-03-23T22:21:03.201230"
       }
     },
     "user-e95d23f5e58c": {
@@ -193,6 +193,17 @@
         "user-8f2073f3a8ad",
         "nHNiX1q9Ws5Zom4vHNtU"
       ]
+    },
+    "user-15a720ac074b": {
+      "uid": "user-15a720ac074b",
+      "name": "стасян",
+      "phone": "+77777777777",
+      "username": "",
+      "status": "offline",
+      "avatar_url": "",
+      "bio": "",
+      "theme": "dark",
+      "is_group": false
     }
   },
   "messages": [
@@ -2553,6 +2564,102 @@
       "disappears_at": null,
       "reactions": {},
       "poll_options": []
+    },
+    {
+      "id": "2ce48714-a8a1-452e-8bd9-e92703881925",
+      "from_uid": "test_user",
+      "to_uid": "user-15a720ac074b",
+      "text": "алёёёё чо ты меня игноришь",
+      "message_type": "text",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-23T21:51:54.627450"
+      },
+      "status": "sent",
+      "file_url": "",
+      "file_name": "",
+      "file_size": 0,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {},
+      "poll_options": []
+    },
+    {
+      "id": "d201321e-710b-4de8-855d-270a0058d196",
+      "from_uid": "test_user",
+      "to_uid": "user-15a720ac074b",
+      "text": "пидорас",
+      "message_type": "text",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-23T21:51:58.701232"
+      },
+      "status": "sent",
+      "file_url": "",
+      "file_name": "",
+      "file_size": 0,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {},
+      "poll_options": []
+    },
+    {
+      "id": "6ea81f9a-10f1-4ccb-9ca0-7a68ebf185c3",
+      "from_uid": "test_user",
+      "to_uid": "user-15a720ac074b",
+      "text": "ответь",
+      "message_type": "text",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-23T21:52:00.347638"
+      },
+      "status": "sent",
+      "file_url": "",
+      "file_name": "",
+      "file_size": 0,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {},
+      "poll_options": []
+    },
+    {
+      "id": "4a93c023-e6d9-438c-90d3-e5965e227dbf",
+      "from_uid": "test_user",
+      "to_uid": "user-15a720ac074b",
+      "text": "я такие тактики придумал",
+      "message_type": "text",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-23T21:52:05.033612"
+      },
+      "status": "sent",
+      "file_url": "",
+      "file_name": "",
+      "file_size": 0,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {},
+      "poll_options": []
     }
   ],
   "settings": {
@@ -2668,6 +2775,7 @@
   "pinned_messages": {},
   "pinned_chats": {
     "test_user": [
+      "user-15a720ac074b",
       "user-6aa2a8a49695",
       "user-8f2073f3a8ad"
     ],

@@ -2,56 +2,52 @@
 from __future__ import annotations
 import os
 from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import QSize
 
-# Путь к папке с иконками
-ICONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icons")
+# ✅ ПРАВИЛЬНЫЙ ПУТЬ — поднимаемся на 3 уровня вверх
+def get_icons_dir():
+    """Получает путь к папке с иконками."""
+    # Текущий файл: Ten-Dem-3/src/utils/icons.py
+    current_file = os.path.abspath(__file__)
+    
+    # Поднимаемся на 3 уровня вверх:
+    # utils → src → Ten-Dem-3
+    utils_dir = os.path.dirname(current_file)           # .../Ten-Dem-3/src/utils
+    src_dir = os.path.dirname(utils_dir)                # .../Ten-Dem-3/src
+    project_root = os.path.dirname(src_dir)             # .../Ten-Dem-3
+    
+    # Возвращаем путь к assets/icons
+    return os.path.join(project_root, "assets", "icons")
 
-# Список всех необходимых иконок
+ICONS_DIR = get_icons_dir()
+
+# Полный список иконок
 ICON_FILES = {
     "plus": "plus.svg",
     "attach": "attach.svg",
     "send": "send.svg",
     "settings": "settings.svg",
-    "search": "search.svg",
-    "back": "back.svg",
-    "menu": "menu.svg",
     "reply": "reply.svg",
     "pin": "pin.svg",
     "forward": "forward.svg",
     "edit": "edit.svg",
     "delete": "delete.svg",
     "check": "check.svg",
-    "double_check": "double_check.svg",
-    "photo": "photo.svg",
-    "video": "video.svg",
-    "file": "file.svg",
-    "poll": "poll.svg",
     "emoji": "emoji.svg",
-    "mic": "mic.svg",
+    "chat": "chat.svg",
+    "contact": "contact.svg",
+    "folder": "folder.svg",
+    "back": "back.svg",
     "close": "close.svg",
     "arrow_right": "arrow_right.svg",
     "arrow_left": "arrow_left.svg",
     "download": "download.svg",
-    "folder": "folder.svg",
-    "chat": "chat.svg",
-    "contact": "contact.svg",
     "group": "group.svg",
     "online": "online.svg",
     "offline": "offline.svg",
 }
 
-def get_icon(name: str, size: int = 22) -> QIcon:
-    """
-    Загружает иконку по имени.
-    
-    Args:
-        name: Имя иконки (из ICON_FILES)
-        size: Размер иконки в пикселях
-    
-    Returns:
-        QIcon или пустой QIcon если файл не найден
-    """
+def get_icon(name: str, color: str = "#FFFFFF", size: int = 22) -> QIcon:
+    """Загружает иконку по имени."""
     if name not in ICON_FILES:
         print(f"⚠️ Иконка '{name}' не найдена в ICON_FILES")
         return QIcon()
@@ -64,18 +60,20 @@ def get_icon(name: str, size: int = 22) -> QIcon:
         return QIcon()
     
     icon = QIcon(filepath)
-    icon.addFile(filepath, QSize(size, size))
+    
+    if icon.isNull():
+        print(f"⚠️ Не удалось загрузить иконку: {filepath}")
+        return QIcon()
+    
     return icon
 
-def get_icon_path(name: str) -> str:
-    """Возвращает полный путь к файлу иконки."""
-    if name not in ICON_FILES:
-        return ""
-    return os.path.join(ICONS_DIR, ICON_FILES[name])
-
 def check_all_icons() -> dict:
-    """Проверяет наличие всех иконок и возвращает отчёт."""
+    """Проверяет наличие всех иконок."""
     report = {"found": [], "missing": []}
+    
+    print(f"\n📁 Путь к иконкам: {ICONS_DIR}")
+    print(f"📁 Путь существует: {os.path.exists(ICONS_DIR)}")
+    print(f"📁 Файлы в папке: {os.listdir(ICONS_DIR) if os.path.exists(ICONS_DIR) else 'Папка не найдена'}\n")
     
     for name, filename in ICON_FILES.items():
         filepath = os.path.join(ICONS_DIR, filename)

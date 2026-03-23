@@ -1,9 +1,13 @@
 """Working chat widget for Ten Dem."""
 from __future__ import annotations
 import os
-from PyQt6.QtCore import QEvent, QMimeData, QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QSize, QTimer, Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeyEvent, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QStyle, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, 
+    QProgressDialog, QPushButton, QScrollArea, QStyle, QTextEdit, 
+    QVBoxLayout, QWidget, QGraphicsOpacityEffect
+)
 from src.database.messages_db import (
     QUICK_REACTIONS,
     delete_message as delete_message_record,
@@ -413,22 +417,108 @@ class ChatWidget(QWidget):
             return
 
         menu = QMenu(self)
-        menu.setStyleSheet(self._menu_style())
         
-        # ✅ UNICODE ИКОНКИ ДЛЯ МЕНЮ
-        reply_action = menu.addAction("↩ Ответить")
-        pin_action = menu.addAction("📌 Закрепить")
-        react_menu = menu.addMenu("😊 Реакции")
-        react_menu.setStyleSheet(self._menu_style())
+        # ✅ ЖЕСТКИЙ ЦВЕТ ФОНА МЕНЮ (никакого черного!)
+        menu.setStyleSheet(
+            """
+            QMenu {
+                background-color: #242424;
+                color: #FFFFFF;
+                border: 1px solid #333333;
+                border-radius: 12px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 10px;
+                margin: 2px 4px;
+                border-radius: 8px;
+                background-color: transparent;
+                color: #FFFFFF;
+                font-size: 13px;
+            }
+            QMenu::item:selected {
+                background-color: #3a3a3a;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #333333;
+                margin: 4px 8px;
+            }
+            """
+        )
+        
+        # Загружаем иконки
+        try:
+            from src.utils.icons import get_icon
+            reply_icon = get_icon("reply", "#CCCCCC", 14)
+            pin_icon = get_icon("pin", "#CCCCCC", 14)
+            emoji_icon = get_icon("emoji", "#CCCCCC", 14)
+            check_icon = get_icon("check", "#CCCCCC", 14)
+            forward_icon = get_icon("forward", "#CCCCCC", 14)
+            edit_icon = get_icon("edit", "#CCCCCC", 14)
+            delete_icon = get_icon("delete", "#CCCCCC", 14)
+        except:
+            reply_icon = QIcon()
+            pin_icon = QIcon()
+            emoji_icon = QIcon()
+            check_icon = QIcon()
+            forward_icon = QIcon()
+            edit_icon = QIcon()
+            delete_icon = QIcon()
+        
+        # Ответить
+        reply_action = menu.addAction("Ответить")
+        if not reply_icon.isNull():
+            reply_action.setIcon(reply_icon)
+        
+        # Закрепить
+        pin_action = menu.addAction("Закрепить")
+        if not pin_icon.isNull():
+            pin_action.setIcon(pin_icon)
+        
+        # Реакции (подменю)
+        react_menu = menu.addMenu("Реакции")
+        react_menu.setStyleSheet(menu.styleSheet())
+        if not emoji_icon.isNull():
+            react_menu.setIcon(emoji_icon)
         
         for emoji in QUICK_REACTIONS:
             action = react_menu.addAction(emoji)
             action.triggered.connect(lambda _, value=emoji, msg_id=message.id: self.apply_reaction(msg_id, value))
         
-        select_action = menu.addAction("✓ Выбрать")
-        forward_action = menu.addAction("→ Переслать")
-        edit_action = menu.addAction("✎ Изменить") if message.from_uid == self.current_user.uid else None
-        delete_action = menu.addAction("🗑 Удалить")
+        # Выбрать
+        select_action = menu.addAction("Выбрать")
+        if not check_icon.isNull():
+            select_action.setIcon(check_icon)
+        
+        # Переслать
+        forward_action = menu.addAction("Переслать")
+        if not forward_icon.isNull():
+            forward_action.setIcon(forward_icon)
+        
+        # Изменить (только свои сообщения)
+        edit_action = None
+        if message.from_uid == self.current_user.uid:
+            edit_action = menu.addAction("Изменить")
+            if not edit_icon.isNull():
+                edit_action.setIcon(edit_icon)
+        
+        # Удалить
+        delete_action = menu.addAction("Удалить")
+        if not delete_icon.isNull():
+            delete_action.setIcon(delete_icon)
+        
+        # Анимация появления
+        opacity_effect = QGraphicsOpacityEffect(menu)
+        menu.setGraphicsEffect(opacity_effect)
+        
+        anim = QPropertyAnimation(opacity_effect, b"opacity")
+        anim.setDuration(120)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        
+        menu.aboutToShow.connect(lambda: anim.start())
         
         action = menu.exec(bubble.mapToGlobal(pos))
         
@@ -559,7 +649,6 @@ class ChatWidget(QWidget):
             QMessageBox.information(self, "Удаление", "Сначала выберите сообщения.")
             return
 
-        # ✅ ВСЕГДА ПОКАЗЫВАЕМ ВЫБОР "У МЕНЯ" / "У ВСЕХ"
         dialog = DeleteMessageDialog(
             allow_for_everyone=True,
             theme_name=getattr(self.current_user, "theme", "dark"),
@@ -761,29 +850,20 @@ class ChatWidget(QWidget):
         return MessageType.FILE
 
     def _menu_style(self):
-        # ✅ ЗАКРУГЛЁННОЕ МЕНЮ С ТЁМНЫМ ФОНОМ
         return f"""
         QMenu {{
-            background-color: #1C1C1D;
-            color: #FFFFFF;
+            background-color: {self.colors['bg_secondary']};
+            color: {self.colors['text_primary']};
             border: none;
-            border-radius: 14px;
-            padding: 6px;
+            border-radius: 20px;
+            padding: 8px;
         }}
         QMenu::item {{
             padding: 10px 16px;
-            border-radius: 10px;
-            color: #FFFFFF;
-            font-size: 14px;
-            background-color: transparent;
+            border-radius: 14px;
         }}
         QMenu::item:selected {{
-            background-color: #2C2C2E;
-        }}
-        QMenu::separator {{
-            height: 1px;
-            background: #2C2C2E;
-            margin: 4px 8px;
+            background-color: {self.colors['bg_tertiary']};
         }}
         """
 
