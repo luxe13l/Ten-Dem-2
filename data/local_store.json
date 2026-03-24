@@ -10,7 +10,7 @@
       "status": "online",
       "last_seen": {
         "__type__": "datetime",
-        "value": "2026-03-23T22:21:03.201230"
+        "value": "2026-03-24T07:16:03.310918"
       }
     },
     "user-e95d23f5e58c": {
@@ -2660,19 +2660,90 @@
       "disappears_at": null,
       "reactions": {},
       "poll_options": []
+    },
+    {
+      "id": "b82b44c7-4355-4c93-a288-635aff23d3c1",
+      "from_uid": "user-e1f1fe304714",
+      "to_uid": "user-e90307d66e60",
+      "text": "ДАРОВА РОДНОЙ",
+      "message_type": "text",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-24T22:01:37.750585"
+      },
+      "status": "read",
+      "file_url": "",
+      "file_name": "",
+      "file_size": 0,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {
+        "😂": [
+          "user-e1f1fe304714"
+        ],
+        "❤️": [
+          "user-e90307d66e60"
+        ]
+      },
+      "poll_options": []
+    },
+    {
+      "id": "db9c9023-b112-4fe3-b0fd-dc174a5ca2b7",
+      "from_uid": "user-e90307d66e60",
+      "to_uid": "user-68a2e6e2bfa8",
+      "text": "ДАРОВА РОДНОЙ",
+      "message_type": "text",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-24T22:05:11.558986"
+      },
+      "status": "sent",
+      "file_url": "",
+      "file_name": "",
+      "file_size": 0,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "user-e1f1fe304714",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {},
+      "poll_options": []
+    },
+    {
+      "id": "c462cbd3-e160-4755-9aaf-b7955ac3a01f",
+      "from_uid": "user-e90307d66e60",
+      "to_uid": "user-e1f1fe304714",
+      "text": "",
+      "message_type": "photo",
+      "timestamp": {
+        "__type__": "datetime",
+        "value": "2026-03-24T22:07:41.504395"
+      },
+      "status": "read",
+      "file_url": "C:/Users/levas/Desktop/maxresdefault.jpg",
+      "file_name": "maxresdefault.jpg",
+      "file_size": 100167,
+      "duration": 0,
+      "reply_to_id": "",
+      "forwarded_from_uid": "",
+      "is_edited": false,
+      "edited_at": null,
+      "deleted_for": [],
+      "disappears_at": null,
+      "reactions": {},
+      "poll_options": []
     }
   ],
   "settings": {
     "test_user": {
-      "name": "Тестовый",
-      "username": "",
-      "bio": "",
       "theme": "system",
-      "font_scale": 12,
-      "sound": false,
-      "push": false,
-      "preview": false,
-      "dnd": true,
       "shortcuts": {
         "send": "Ctrl+Return",
         "search": "Ctrl+F",
@@ -2764,6 +2835,15 @@
       "push": true,
       "preview": true,
       "dnd": false,
+      "shortcuts": {
+        "send": "Ctrl+Return",
+        "search": "Ctrl+F",
+        "new_chat": "Ctrl+N",
+        "escape": "Esc"
+      }
+    },
+    "user-e90307d66e60": {
+      "theme": "system",
       "shortcuts": {
         "send": "Ctrl+Return",
         "search": "Ctrl+F",

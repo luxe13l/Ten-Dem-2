@@ -20,12 +20,47 @@ from src.database.users_db import get_user_by_phone
 from src.ui.legal_agreement import LegalAgreementWindow
 
 
-PROFANITY_PARTS = ("хуй", "хуе", "еб", "пизд", "бля", "сук", "fuck", "shit")
+# ✅ РАСШИРЕННЫЙ СПИСОК ЗАПРЕЩЁННЫХ СЛОВ
+PROFANITY_PARTS = (
+    # Русские маты
+    "хуй", "хуе", "хуя", "хую", "хуем", "хуево",
+    "еб", "ебал", "ебать", "ебуч", "ебан",
+    "пизд", "пизда", "пизде", "пизду",
+    "бля", "бляд", "блять",
+    "сук", "сука", "суки",
+    "муд", "мудак", "мудаки",
+    "залуп", "залупа",
+    "хер", "херня",
+    "говн", "говно",
+    "жоп", "жопа",
+    "еблан", "ебало",
+    "пидор", "педик",
+    "уеб", "уебан",
+    
+    # Английские маты
+    "fuck", "fucking", "fucker", "fucked",
+    "shit", "shitty", "shitter",
+    "bitch", "bitches",
+    "ass", "asshole", "asses",
+    "dick", "dicks", "dildo",
+    "cock", "cocks",
+    "pussy", "pussies",
+    "cum", "cumming",
+    "nigga", "nigger",
+    
+    # Спам и системные
+    "spam", "scam", "fake",
+    "admin", "system", "support",
+    "ten dem", "tendem", "ten-dem",
+)
 
 
 def contains_profanity(value: str) -> bool:
+    """Проверяет текст на наличие запрещённых слов."""
     lowered = (value or "").lower()
-    return any(part in lowered for part in PROFANITY_PARTS)
+    # Удаляем все не буквенные символы для лучшей проверки
+    cleaned = re.sub(r'[^a-zA-Zа-яА-ЯёЁ0-9]', '', lowered)
+    return any(part in lowered or part in cleaned for part in PROFANITY_PARTS)
 
 
 def primary_button_style() -> str:
@@ -372,12 +407,15 @@ class UsernameStep(QWidget):
         self.error_label.clear()
         if not text.strip():
             return
+        
+        # ✅ ПРОВЕРКА НА ПЛОХИЕ СЛОВА
+        if contains_profanity(text):
+            self.error_label.setText("Username содержит недопустимые слова")
+            return
+        
         valid, result = auth_manager.validate_username(text)
         if not valid:
             self.error_label.setText(result)
-            return
-        if contains_profanity(text):
-            self.error_label.setText("Username содержит недопустимые слова")
             return
         self.status_label.setText("Проверяем username...")
         self.status_label.setStyleSheet("color: #9CA3AF; font-size: 12px;")

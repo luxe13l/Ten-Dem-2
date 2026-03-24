@@ -122,7 +122,7 @@ def on_registration_complete(data, wizard, app):
     print(f"✅ Окно видно: {main_window_ref.isVisible()}")
 
     print("9. Загрузка контактов...")
-    main_window_ref.load_contacts()
+    main_window_ref.load_chats()
 
     print("✅ Мессенджер запущен!")
 
