@@ -275,21 +275,56 @@ def get_messages(user_uid: str, contact_uid: str, limit: int = 50) -> list[dict[
     return local_messages[-limit:]
 
 
+# ✅ ИСПРАВЛЕНО: Теперь читает из Firebase (коллекция chats)
 def get_chat_summaries(current_uid: str) -> dict[str, dict[str, Any]]:
+    """Получает список чатов пользователя из Firebase + локально"""
     summaries: dict[str, dict[str, Any]] = {}
-    for message in _load_local_messages():
-        if current_uid not in {message.get("from_uid"), message.get("to_uid")}:
-            continue
-        if current_uid in message.get("deleted_for", []):
-            continue
-        contact_uid = message.get("to_uid") if message.get("from_uid") == current_uid else message.get("from_uid")
-        summary = summaries.setdefault(contact_uid, {"last_message": "", "timestamp": None, "unread_count": 0})
-        timestamp = message.get("timestamp") or _now()
-        if summary["timestamp"] is None or _sort_timestamp(timestamp) >= _sort_timestamp(summary["timestamp"]):
-            summary["last_message"] = _preview_message(message)
-            summary["timestamp"] = timestamp
-        if message.get("to_uid") == current_uid and message.get("status") != MessageStatus.READ.value:
-            summary["unread_count"] += 1
+    
+    # 1. Сначала пробуем получить из Firebase (коллекция chats)
+    db = get_db()
+    if db:
+        try:
+            chats_ref = db.collection("chats")
+            query = chats_ref.where("participants", "array_contains", current_uid)
+            docs = query.stream()
+            
+            for doc in docs:
+                data = doc.to_dict() or {}
+                participants = data.get("participants", [])
+                
+                # Находим собеседника
+                contact_uid = None
+                for p in participants:
+                    if p != current_uid:
+                        contact_uid = p
+                        break
+                
+                if contact_uid:
+                    summaries[contact_uid] = {
+                        "last_message": data.get("last_message", ""),
+                        "last_message_type": data.get("last_message_type", "text"),
+                        "timestamp": data.get("last_message_time"),
+                        "unread_count": data.get("unread_count", 0),
+                    }
+        except Exception as exc:
+            print(f"⚠️ Ошибка получения чатов из Firebase: {exc}")
+    
+    # 2. Если из Firebase пусто - берём из локальных сообщений (резерв)
+    if not summaries:
+        for message in _load_local_messages():
+            if current_uid not in {message.get("from_uid"), message.get("to_uid")}:
+                continue
+            if current_uid in message.get("deleted_for", []):
+                continue
+            contact_uid = message.get("to_uid") if message.get("from_uid") == current_uid else message.get("from_uid")
+            summary = summaries.setdefault(contact_uid, {"last_message": "", "timestamp": None, "unread_count": 0})
+            timestamp = message.get("timestamp") or _now()
+            if summary["timestamp"] is None or _sort_timestamp(timestamp) >= _sort_timestamp(summary["timestamp"]):
+                summary["last_message"] = _preview_message(message)
+                summary["timestamp"] = timestamp
+            if message.get("to_uid") == current_uid and message.get("status") != MessageStatus.READ.value:
+                summary["unread_count"] += 1
+    
     return summaries
 
 
@@ -347,3 +382,32 @@ def _update_last_message(uid1: str, uid2: str, message_data: dict[str, Any]):
         )
     except Exception as exc:
         print(f"Ошибка обновления сводки чата: {exc}")
+
+
+# ✅ НОВАЯ ФУНКЦИЯ - УДАЛЕНИЕ ЧАТА
+def delete_chat(user_uid: str, contact_uid: str) -> bool:
+    """
+    Удаляет чат из списка пользователя (не удаляет сообщения!).
+    """
+    db = get_db()
+    if not db:
+        return False
+    
+    try:
+        # Формат ID чата как в _update_last_message
+        chat_id = "_".join(sorted([user_uid, contact_uid]))
+        
+        chat_ref = db.collection("chats").document(chat_id)
+        chat_doc = chat_ref.get()
+        
+        if chat_doc.exists:
+            chat_ref.delete()
+            print(f"✅ Чат {chat_id} удалён для {user_uid}")
+            return True
+        else:
+            print(f"⚠️ Чат {chat_id} не найден")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Ошибка удаления чата: {e}")
+        return False

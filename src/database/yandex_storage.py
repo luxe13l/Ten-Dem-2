@@ -1,91 +1,64 @@
-"""
-Клиент для Яндекс.Облако Object Storage
-Для хранения файлов (аватарки, фото, документы)
-"""
+"""Yandex Object Storage для фото и видео."""
+import os
 import boto3
 from botocore.client import Config
-import os
-
+from typing import Optional, List
+from datetime import datetime
 
 class YandexStorage:
-    def __init__(self, access_key, secret_key, bucket_name):
-        self.bucket_name = bucket_name
-        
-        # Подключение к Яндекс Object Storage
-        self.client = boto3.client(
-            's3',
-            endpoint_url='https://storage.yandexcloud.net',
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            config=Config(signature_version='s3v4')
-        )
+    def __init__(self):
+        self.client = None
+        self.bucket = None
+        self.initialized = False
     
-    def upload_file(self, file_path, object_name):
-        """Загружает файл в хранилище."""
+    def init(self):
+        """Инициализирует подключение к Yandex Storage."""
         try:
-            self.client.upload_file(file_path, self.bucket_name, object_name)
-            print(f"✅ Файл загружен: {object_name}")
-            return True
-        except Exception as e:
-            print(f"❌ Ошибка загрузки: {e}")
-            return False
-    
-    def download_file(self, object_name, file_path):
-        """Скачивает файл из хранилища."""
-        try:
-            self.client.download_file(self.bucket_name, object_name, file_path)
-            return True
-        except Exception as e:
-            print(f"❌ Ошибка скачивания: {e}")
-            return False
-    
-    def get_file_url(self, object_name, expires_in=3600):
-        """Получает временную ссылку на файл."""
-        try:
-            url = self.client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': self.bucket_name, 'Key': object_name},
-                ExpiresIn=expires_in
+            self.session = boto3.session.Session()
+            self.client = self.session.client(
+                service_name='s3',
+                endpoint_url='https://storage.yandexcloud.net',
+                aws_access_key_id=os.getenv('YANDEX_ACCESS_KEY'),
+                aws_secret_access_key=os.getenv('YANDEX_SECRET_KEY'),
+                config=Config(signature_version='s3v4')
             )
+            self.bucket = os.getenv('YANDEX_BUCKET_NAME', 'ten-dem-files')
+            self.initialized = True
+            print(f"✅ Yandex Storage подключён (бакет: {self.bucket})")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка подключения к Yandex Storage: {e}")
+            self.initialized = False
+            return False
+    
+    def upload_file(self, file_path: str, folder: str = "messages") -> Optional[str]:
+        """Загружает файл и возвращает URL."""
+        if not self.initialized:
+            self.init()
+        
+        if not self.initialized or not os.path.exists(file_path):
+            return None
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{timestamp}_{os.path.basename(file_path)}"
+            key = f"{folder}/{filename}"
+            
+            self.client.upload_file(file_path, self.bucket, key)
+            
+            url = f"https://storage.yandexcloud.net/{self.bucket}/{key}"
+            print(f"✅ Файл загружен: {url}")
             return url
         except Exception as e:
-            print(f"❌ Ошибка получения URL: {e}")
+            print(f"❌ Ошибка загрузки файла: {e}")
             return None
-    
-    def upload_avatar(self, user_id, file_path):
-        """Загружает аватар пользователя."""
-        ext = os.path.splitext(file_path)[1]  # .jpg, .png и т.д.
-        object_name = f"users/{user_id}/avatar{ext}"
-        success = self.upload_file(file_path, object_name)
-        if success:
-            return self.get_file_url(object_name, expires_in=31536000)  # 1 год
-        return None
-    
-    def upload_message_file(self, chat_id, file_path, file_name):
-        """Загружает файл сообщения."""
-        object_name = f"messages/{chat_id}/{file_name}"
-        success = self.upload_file(file_path, object_name)
-        if success:
-            return self.get_file_url(object_name, expires_in=31536000)
-        return None
-    
-    def delete_file(self, object_name):
-        """Удаляет файл из хранилища."""
-        try:
-            self.client.delete_object(Bucket=self.bucket_name, Key=object_name)
-            return True
-        except Exception as e:
-            print(f"❌ Ошибка удаления: {e}")
-            return False
 
+storage = YandexStorage()
 
-# Глобальный экземпляр
-yandex_storage = None
+def init_yandex_storage():
+    """Инициализирует Yandex Storage."""
+    return storage.init()
 
-
-def init_yandex_storage(access_key, secret_key, bucket_name):
-    """Инициализирует Яндекс.Хранилище."""
-    global yandex_storage
-    yandex_storage = YandexStorage(access_key, secret_key, bucket_name)
-    print(f"✅ Яндекс.Хранилище инициализировано (бакет: {bucket_name})")
-    return yandex_storage
+def upload_file(file_path: str, folder: str = "messages") -> Optional[str]:
+    """Загружает файл в Yandex Storage."""
+    return storage.upload_file(file_path, folder)

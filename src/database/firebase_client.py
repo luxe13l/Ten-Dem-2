@@ -3,22 +3,16 @@ import os
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# Глобальная переменная для хранения клиента базы данных
 _db = None
 
 def init_firebase():
-    """
-    Инициализирует Firebase при запуске приложения.
-    Вызывается один раз в main.py.
-    """
+    """Инициализирует Firebase при запуске приложения."""
     global _db
     
-    # Если уже инициализировано, просто возвращаем клиент
     if firebase_admin._apps:
         _db = firestore.client()
         return _db
 
-    # Ищем ключ в корне проекта (Ten-Dem-3/firebase-key.json)
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     key_path = os.path.join(project_root, "firebase-key.json")
     
@@ -36,11 +30,7 @@ def init_firebase():
     
     try:
         cred = credentials.Certificate(key_path)
-        # ✅ Инициализируем с настройками для быстрого старта
-        firebase_admin.initialize_app(cred, options={
-            'httpTimeout': 5,  # Таймаут 5 секунд вместо бесконечности
-            'connectTimeout': 3,
-        })
+        firebase_admin.initialize_app(cred)
         _db = firestore.client()
         print("✅ Firebase успешно инициализирован!")
         return _db
@@ -49,9 +39,7 @@ def init_firebase():
         raise e
 
 def get_firestore_client():
-    """
-    Возвращает экземпляр клиента Firestore для использования в других модулях.
-    """
+    """Возвращает экземпляр клиента Firestore."""
     global _db
     if _db is None:
         try:
@@ -62,8 +50,5 @@ def get_firestore_client():
     return _db
 
 def get_db():
-    """
-    Возвращает экземпляр клиента Firestore (алиас для get_firestore_client).
-    Нужно для совместимости со старым кодом.
-    """
+    """Возвращает экземпляр клиента Firestore (алиас)."""
     return get_firestore_client()

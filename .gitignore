@@ -26,3 +26,14 @@ Thumbs.db
 
 # Project specific
 assets/cache/
+
+# Ключи и секреты
+firebase-key.json
+.env
+*.key
+*.pem
+
+# Данные
+data/*.db
+data/*.json
+*.log

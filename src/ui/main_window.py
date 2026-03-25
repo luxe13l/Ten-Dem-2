@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QStyle,
     QVBoxLayout,
     QWidget,
+    QDialog,
 )
 from src.database.local_store import load_store, save_store
 from src.database.messages_db import get_chat_summaries
@@ -46,7 +47,6 @@ class MainWindow(QMainWindow):
         self._shortcuts: list[QShortcut] = []
         self.current_view = "chats"
         
-        # ✅ Путь к иконкам
         self.icons_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "assets", "icons"
@@ -113,7 +113,6 @@ class MainWindow(QMainWindow):
         layout.setSpacing(14)
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         
-        # ✅ ИСПРАВЛЕНО: SVG иконки вместо эмодзи
         self.nav_btn_chats = self._rail_icon_button("chat.svg", active=True)
         self.nav_btn_chats.setToolTip("Чаты")
         self.nav_btn_chats.clicked.connect(lambda: self.switch_view("chats"))
@@ -135,7 +134,6 @@ class MainWindow(QMainWindow):
         return rail
 
     def _rail_icon_button(self, icon_name: str, active: bool = False):
-        """Создаёт кнопку с SVG иконкой"""
         button = QPushButton()
         button.setFixedSize(44, 44)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -363,9 +361,11 @@ class MainWindow(QMainWindow):
         user_data = find_user_by_phone(phone)
         
         if not user_data:
-            QMessageBox.warning(self, "Ошибка", 
-                f"Пользователь с номером {phone} не найден в базе Ten Dem.\n"
-                "Попросите друга сначала зарегистрироваться в приложении.")
+            self._show_error_dialog(
+                "Пользователь не найден",
+                f"Контакт с номером {phone} не зарегистрирован в Ten Dem.\n\n"
+                f"Попросите пользователя сначала установить приложение."
+            )
             return
 
         contact_info = {
@@ -376,20 +376,21 @@ class MainWindow(QMainWindow):
         
         add_contact_to_list(self.current_user.uid, contact_info)
         
-        QMessageBox.information(self, "Успех", 
-            f"Контакт \"{contact_info['name']}\" добавлен!\n"
-            "Он появится у вас в списке контактов.\n"
-            "У друга вы появитесь только после первого сообщения.")
+        self._show_success_dialog(
+            "Контакт добавлен",
+            f"\"{contact_info['name']}\" успешно добавлен в ваши контакты.\n\n"
+            f"Теперь вы можете начать переписку."
+        )
         
         if self.current_view == "contacts":
             self.load_contacts_list()
         else:
-            reply = QMessageBox.question(self, "Перейти к контакту?", 
+            reply = QMessageBox.question(self, "Открыть чат?", 
                 "Хотите открыть чат с этим пользователем?", 
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                self.switch_view("contacts")
-                self.load_contacts_list()
+        if reply == QMessageBox.StandardButton.Yes:
+            self.switch_view("contacts")
+            self.load_contacts_list()
 
     def create_group(self):
         users = [user for user in get_all_users() if user.get("uid") != self.current_user.uid and not user.get("is_group")]
@@ -415,6 +416,7 @@ class MainWindow(QMainWindow):
         self._open_chat_by_uid(uid)
 
     def load_chats(self):
+        """✅ Загружает чаты из Firebase + локального кэша"""
         self.chats_list_widget.clear()
         self.contact_widgets.clear()
         
@@ -422,6 +424,9 @@ class MainWindow(QMainWindow):
         all_users = get_all_users()
         visible_users = [u for u in all_users if u.get('uid') != self.current_user.uid]
         chat_users = [u for u in visible_users if u.get('uid') in summaries]
+        
+        if not chat_users:
+            print("📭 Список чатов пуст")
         
         for user_data in chat_users:
             user = User.from_dict(user_data, user_data.get('uid'))
@@ -439,6 +444,8 @@ class MainWindow(QMainWindow):
             self.chats_list_widget.addItem(item)
             self.chats_list_widget.setItemWidget(item, widget)
             self.contact_widgets[user.uid] = widget
+        
+        print(f"✅ Загружено {len(chat_users)} чатов")
 
     def load_contacts_list(self):
         self.contacts_list_widget.clear()
@@ -567,9 +574,57 @@ class MainWindow(QMainWindow):
             self.delete_contact(widget.user.uid)
 
     def delete_chat(self, chat_uid: str):
-        if QMessageBox.question(self, "Удалить чат", "Удалить чат из списка?") != QMessageBox.StandardButton.Yes:
+        """✅ Полное удаление чата из Firebase + локально + обновление UI"""
+        if QMessageBox.question(self, "Удалить чат", 
+            "Удалить чат из списка?\n\n⚠️ Сообщения останутся в базе данных.") != QMessageBox.StandardButton.Yes:
             return
-        self.load_chats()
+        
+        try:
+            from src.database.messages_db import delete_chat as delete_chat_record
+            success = delete_chat_record(self.current_user.uid, chat_uid)
+            
+            # ✅ ВАЖНО: Очищаем локальные сообщения этого чата
+            store = load_store()
+            messages = store.get("messages", [])
+            
+            filtered_messages = [
+                msg for msg in messages 
+                if not (
+                    (msg.get("from_uid") == self.current_user.uid and msg.get("to_uid") == chat_uid) or
+                    (msg.get("from_uid") == chat_uid and msg.get("to_uid") == self.current_user.uid)
+                )
+            ]
+            
+            if len(filtered_messages) < len(messages):
+                store["messages"] = filtered_messages
+                save_store(store)
+                print(f"🧹 Очищено {len(messages) - len(filtered_messages)} локальных сообщений")
+            
+            try:
+                from src.database.local_cache import clear_messages_cache
+                clear_messages_cache(chat_uid)
+            except:
+                pass
+            
+            self.load_chats()
+            
+            if self.current_chat_widget:
+                current_chat_user = self.current_chat_widget.contact
+                if current_chat_user.uid == chat_uid:
+                    self.current_chat_widget.deleteLater()
+                    self.current_chat_widget = None
+                    self.placeholder.show()
+            
+            self.chats_list_widget.repaint()
+            self.chats_list_widget.update()
+            
+            print(f"✅ Чат {chat_uid} успешно удалён")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось удалить чат:\n{str(e)}")
+            print(f"❌ Ошибка удаления чата: {e}")
+            import traceback
+            traceback.print_exc()
 
     def delete_contact(self, contact_uid: str):
         if QMessageBox.question(self, "Удалить контакт", "Удалить контакт из списка?") != QMessageBox.StandardButton.Yes:
@@ -623,7 +678,6 @@ class MainWindow(QMainWindow):
         self.settings_window.exec()
 
     def on_settings_saved(self, settings):
-        """✅ ИСПРАВЛЕНО: Тема применяется ко всему приложению"""
         self.current_user.name = settings.get("name", self.current_user.name)
         self.current_user.username = settings.get("username", getattr(self.current_user, "username", ""))
         self.current_user.bio = settings.get("bio", getattr(self.current_user, "bio", ""))
@@ -679,6 +733,118 @@ class MainWindow(QMainWindow):
             background-color: {self.colors['bg_tertiary']};
         }}
         """
+
+    def _show_success_dialog(self, title: str, message: str):
+        """✅ Показывает красивое окно успеха"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setModal(True)
+        dialog.setFixedSize(400, 200)
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self.colors['bg_secondary']};
+                border-radius: 20px;
+            }}
+            QLabel {{
+                color: {self.colors['text_primary']};
+                font-size: 14px;
+            }}
+            QPushButton {{
+                background-color: {self.colors['accent_primary']};
+                color: #0D0D0D;
+                border: none;
+                border-radius: 12px;
+                padding: 10px 24px;
+                font-weight: 600;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+        
+        icon_label = QLabel("✅")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("font-size: 48px;")
+        layout.addWidget(icon_label)
+        
+        title_label = QLabel(title)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {self.colors['text_primary']};")
+        layout.addWidget(title_label)
+        
+        message_label = QLabel(message)
+        message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        message_label.setWordWrap(True)
+        message_label.setStyleSheet(f"font-size: 13px; color: {self.colors['text_secondary']};")
+        layout.addWidget(message_label)
+        
+        btn = QPushButton("Готово")
+        btn.clicked.connect(dialog.accept)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn)
+        
+        dialog.exec()
+
+    def _show_error_dialog(self, title: str, message: str):
+        """❌ Показывает красивое окно ошибки"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setModal(True)
+        dialog.setFixedSize(400, 200)
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self.colors['bg_secondary']};
+                border-radius: 20px;
+            }}
+            QLabel {{
+                color: {self.colors['text_primary']};
+                font-size: 14px;
+            }}
+            QPushButton {{
+                background-color: #EF4444;
+                color: white;
+                border: none;
+                border-radius: 12px;
+                padding: 10px 24px;
+                font-weight: 600;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: #DC2626;
+            }}
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+        
+        icon_label = QLabel("⚠️")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("font-size: 48px;")
+        layout.addWidget(icon_label)
+        
+        title_label = QLabel(title)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {self.colors['text_primary']};")
+        layout.addWidget(title_label)
+        
+        message_label = QLabel(message)
+        message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        message_label.setWordWrap(True)
+        message_label.setStyleSheet(f"font-size: 13px; color: {self.colors['text_secondary']};")
+        layout.addWidget(message_label)
+        
+        btn = QPushButton("Понятно")
+        btn.clicked.connect(dialog.accept)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn)
+        
+        dialog.exec()
 
     def closeEvent(self, event):
         set_online_status(self.current_user.uid, "offline")
