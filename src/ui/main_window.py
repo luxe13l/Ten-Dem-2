@@ -1,8 +1,8 @@
-"""Main messenger window with Navigation Rail."""
+﻿"""Main messenger window with Navigation Rail."""
 from __future__ import annotations
 import uuid
 import os
-from PyQt6.QtCore import QSize, Qt, QTimer, QRegularExpression
+from PyQt6.QtCore import QSize, Qt, QTimer, QRegularExpression, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect,
@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QDialog,
 )
 from src.database.local_store import load_store, save_store
-from src.database.messages_db import get_chat_summaries
+from src.database.messages_db import get_chat_summaries, listen_for_chat_updates, prefetch_chat_messages_async
 from src.database.users_db import create_user, get_all_users, set_online_status, find_user_by_phone, add_contact_to_list, get_contacts, update_user, get_db
 from src.models.user import User
 from src.styles import FONT_FAMILY, LEFT_PANEL_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH
@@ -35,6 +35,8 @@ from src.ui.contact_item import ContactItem
 from src.ui.settings_window import DEFAULT_SHORTCUTS, SettingsWindow
 
 class MainWindow(QMainWindow):
+    chats_realtime_updated = pyqtSignal(object)
+
     def __init__(self, current_user, parent=None):
         super().__init__(parent)
         self.current_user = current_user
@@ -46,6 +48,7 @@ class MainWindow(QMainWindow):
         self.shortcuts_map = self._load_shortcuts()
         self._shortcuts: list[QShortcut] = []
         self.current_view = "chats"
+        self.chats_listener = None
         
         self.icons_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -53,7 +56,11 @@ class MainWindow(QMainWindow):
         )
         
         self.init_ui()
+        self.load_chats()
         self._bind_shortcuts()
+        self.chats_realtime_updated.connect(self._on_chats_realtime_updated)
+        self._start_chats_realtime_listener()
+        QTimer.singleShot(0, self._warmup_messages_cache)
         set_online_status(self.current_user.uid, "online")
 
     def _load_shortcuts(self):
@@ -384,10 +391,14 @@ class MainWindow(QMainWindow):
         
         if self.current_view == "contacts":
             self.load_contacts_list()
-        else:
-            reply = QMessageBox.question(self, "Открыть чат?", 
-                "Хотите открыть чат с этим пользователем?", 
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Открыть чат?",
+            "Хотите открыть чат с этим пользователем?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if reply == QMessageBox.StandardButton.Yes:
             self.switch_view("contacts")
             self.load_contacts_list()
@@ -510,11 +521,21 @@ class MainWindow(QMainWindow):
                 self._open_chat_interface(widget.user)
                 return
 
+    def _remove_chat_item(self, chat_uid: str):
+        for index in range(self.chats_list_widget.count() - 1, -1, -1):
+            item = self.chats_list_widget.item(index)
+            widget = self.chats_list_widget.itemWidget(item)
+            if widget and widget.user.uid == chat_uid:
+                self.chats_list_widget.takeItem(index)
+        self.contact_widgets.pop(chat_uid, None)
+
     def _open_chat_interface(self, user: User):
         if self.placeholder:
             self.placeholder.hide()
         
         if self.current_chat_widget:
+            if hasattr(self.current_chat_widget, "shutdown"):
+                self.current_chat_widget.shutdown()
             self.current_chat_widget.deleteLater()
         
         self.current_chat_widget = ChatWidget(self.current_user, user, shortcuts_map=self.shortcuts_map, parent=self.right_panel)
@@ -526,6 +547,40 @@ class MainWindow(QMainWindow):
     def refresh_chats(self, contact_uid: str = ""):
         if self.current_view == "chats":
             self.load_chats()
+
+    def _start_chats_realtime_listener(self):
+        if self.chats_listener:
+            try:
+                self.chats_listener()
+            except Exception:
+                pass
+            self.chats_listener = None
+        self.chats_listener = listen_for_chat_updates(self.current_user.uid, self._on_chats_realtime_raw)
+
+    def _on_chats_realtime_raw(self, changed: list):
+        self.chats_realtime_updated.emit(changed or [])
+
+    def _on_chats_realtime_updated(self, changed: list):
+        # Обновляем список чатов при любых изменениях, даже если пользователь
+        # сейчас в разделе "Контакты" — чтобы новый диалог появился сразу.
+        self.load_chats()
+
+    def _warmup_messages_cache(self):
+        """Прогревает кэш сообщений после старта приложения."""
+        try:
+            summaries = get_chat_summaries(self.current_user.uid)
+            for contact_uid in summaries.keys():
+                prefetch_chat_messages_async(self.current_user.uid, contact_uid, limit=180)
+        except Exception as exc:
+            print(f"Ошибка прогрева кэша сообщений: {exc}")
+
+    def _stop_chats_realtime_listener(self):
+        if self.chats_listener:
+            try:
+                self.chats_listener()
+            except Exception:
+                pass
+            self.chats_listener = None
 
     def open_chat_context_menu(self, pos):
         item = self.chats_list_widget.itemAt(pos)
@@ -574,16 +629,13 @@ class MainWindow(QMainWindow):
             self.delete_contact(widget.user.uid)
 
     def delete_chat(self, chat_uid: str):
-        """✅ Полное удаление чата из Firebase + локально + обновление UI"""
+        """Быстро удаляет чат из UI и запускает удаление из Firebase в фоне."""
         if QMessageBox.question(self, "Удалить чат", 
-            "Удалить чат из списка?\n\n⚠️ Сообщения останутся в базе данных.") != QMessageBox.StandardButton.Yes:
+            "Удалить чат из списка?\n\nСообщения удалятся в фоне через сервер.") != QMessageBox.StandardButton.Yes:
             return
         
         try:
-            from src.database.messages_db import delete_chat as delete_chat_record
-            success = delete_chat_record(self.current_user.uid, chat_uid)
-            
-            # ✅ ВАЖНО: Очищаем локальные сообщения этого чата
+            # 1) Сразу очищаем локальные сообщения, чтобы UI обновился мгновенно.
             store = load_store()
             messages = store.get("messages", [])
             
@@ -606,17 +658,24 @@ class MainWindow(QMainWindow):
             except:
                 pass
             
-            self.load_chats()
+            # 2) Мгновенно обновляем UI.
+            self._remove_chat_item(chat_uid)
             
             if self.current_chat_widget:
                 current_chat_user = self.current_chat_widget.contact
                 if current_chat_user.uid == chat_uid:
+                    if hasattr(self.current_chat_widget, "shutdown"):
+                        self.current_chat_widget.shutdown()
                     self.current_chat_widget.deleteLater()
                     self.current_chat_widget = None
                     self.placeholder.show()
             
             self.chats_list_widget.repaint()
             self.chats_list_widget.update()
+
+            # 3) Удаление в Firebase уходит в фон (не блокирует интерфейс).
+            from src.database.messages_db import delete_chat as delete_chat_record
+            delete_chat_record(self.current_user.uid, chat_uid)
             
             print(f"✅ Чат {chat_uid} успешно удалён")
             
@@ -668,6 +727,8 @@ class MainWindow(QMainWindow):
             self.settings_window.reject()
             return
         if self.current_chat_widget:
+            if hasattr(self.current_chat_widget, "shutdown"):
+                self.current_chat_widget.shutdown()
             self.current_chat_widget.deleteLater()
             self.current_chat_widget = None
             self.placeholder.show()
@@ -847,5 +908,9 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event):
+        self._stop_chats_realtime_listener()
+        if self.current_chat_widget and hasattr(self.current_chat_widget, "shutdown"):
+            self.current_chat_widget.shutdown()
         set_online_status(self.current_user.uid, "offline")
         event.accept()
+

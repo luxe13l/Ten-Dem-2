@@ -1,6 +1,7 @@
-"""Working chat widget for Ten Dem."""
+﻿"""Working chat widget for Ten Dem with Real-time support."""
 from __future__ import annotations
 import os
+import traceback
 from PyQt6.QtCore import QEvent, QMimeData, QSize, QTimer, Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeyEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -17,6 +18,7 @@ from src.database.messages_db import (
     mark_chat_as_read,
     send_message as send_message_record,
     toggle_reaction,
+    listen_for_messages, # Импортируем новую функцию
 )
 from src.database.users_db import get_all_users
 from src.models.message import Message, MessageStatus, MessageType
@@ -31,6 +33,7 @@ from src.ui.settings_window import DEFAULT_SHORTCUTS
 
 class ChatWidget(QWidget):
     chat_updated = pyqtSignal(str)
+    realtime_messages_received = pyqtSignal(object)
     
     def __init__(self, current_user, contact, shortcuts_map: dict | None = None, parent=None):
         super().__init__(parent)
@@ -45,10 +48,18 @@ class ChatWidget(QWidget):
         self.selection_mode = False
         self.selected_message_ids: set[str] = set()
         self._shortcuts: list[QShortcut] = []
+        
+        # ✅ ПЕРЕМЕННАЯ ДЛЯ ХРАНЕНИЯ СЛУШАТЕЛЯ REAL-TIME
+        self.messages_listener = None 
+        
         self.setAcceptDrops(True)
         self.build_ui()
         self._bind_shortcuts()
         self.load_messages(animated=False)
+        self.realtime_messages_received.connect(self._apply_realtime_update)
+        
+        # ✅ ЗАПУСКАЕМ REAL-TIME СЛУШАТЕЛЬ ПОСЛЕ ЗАГРУЗКИ ИСТОРИИ
+        self.start_realtime_listener()
 
     def build_ui(self):
         root = QVBoxLayout(self)
@@ -95,7 +106,7 @@ class ChatWidget(QWidget):
         self.messages_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.messages_scroll.setStyleSheet(
             f"""
-            QScrollArea {{ border: none; background: {self.colors['bg_secondary']}; border-radius: 28px; }}
+            QScrollArea {{ border: none; background: {self.colors['bg_secondary']}; border-radius: 28px 28px 0 0; }}
             QScrollBar:vertical {{ width: 10px; background: transparent; margin: 8px 6px 8px 0; }}
             QScrollBar::handle:vertical {{ background: {'rgba(25,25,28,0.16)' if self.current_user.theme == 'light' else 'rgba(255,255,255,0.18)'}; border-radius: 999px; min-height: 42px; }}
             QScrollBar::handle:vertical:hover {{ background: {'rgba(25,25,28,0.24)' if self.current_user.theme == 'light' else 'rgba(255,255,255,0.22)'}; }}
@@ -228,13 +239,13 @@ class ChatWidget(QWidget):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(12)
 
-        assets_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icons")
+        assets_root = self._icons_root()
 
         self.attach_btn = QPushButton()
         self.attach_btn.setFixedSize(42, 42)
         self.attach_btn.setIcon(QIcon(os.path.join(assets_root, "attach.svg")))
         self.attach_btn.setIconSize(QSize(18, 18))
-        self.attach_btn.setStyleSheet(self._icon_button_style())
+        self.attach_btn.setStyleSheet(self._attach_button_style())
         self.attach_btn.clicked.connect(self.on_attach_clicked)
         layout.addWidget(self.attach_btn)
 
@@ -381,6 +392,123 @@ class ChatWidget(QWidget):
         mark_chat_as_read(self.current_user.uid, self.contact.uid)
         QTimer.singleShot(0, self.scroll_to_bottom)
 
+    # ✅ НОВЫЕ МЕТОДЫ ДЛЯ REAL-TIME
+    def start_realtime_listener(self):
+        """✅ Запускает прослушивание новых сообщений в реальном времени"""
+        if self.messages_listener:
+            self.messages_listener()
+            
+        self.messages_listener = listen_for_messages(
+            self.current_user.uid, 
+            self.contact.uid, 
+            self._on_realtime_update
+        )
+
+    def _on_realtime_update(self, messages_data: list):
+        """Callback Firestore (фоновый поток): передаём данные в UI-поток."""
+        self.realtime_messages_received.emit(messages_data or [])
+
+    def _apply_realtime_update(self, messages_data: list):
+        """Применяет real-time обновления в UI-потоке."""
+        try:
+            self._apply_realtime_update_impl(messages_data)
+        except Exception as exc:
+            print(f"Ошибка real-time обновления чата: {exc}")
+            traceback.print_exc()
+
+    def _apply_realtime_update_impl(self, messages_data: list):
+        """Применяет real-time изменения (новые, редактирование, реакции, удаление)."""
+        if not isinstance(messages_data, list):
+            return
+
+        has_new_incoming = False
+        need_refresh = False
+
+        for data in messages_data:
+            if not isinstance(data, dict):
+                continue
+            msg_id = data.get("id")
+            if not msg_id:
+                continue
+
+            change_type = data.get("_change_type", "MODIFIED")
+            from_uid = data.get("from_uid")
+            existing_msg = self._find_message(msg_id)
+
+            if change_type == "REMOVED":
+                bubble = self.message_widgets.pop(msg_id, None)
+                if bubble:
+                    bubble.deleteLater()
+                self.messages = [m for m in self.messages if m.id != msg_id]
+                self.empty_state.setVisible(not self.messages)
+                if from_uid == self.contact.uid or (existing_msg and existing_msg.from_uid == self.contact.uid):
+                    need_refresh = True
+                continue
+
+            if existing_msg:
+                existing_msg.reactions = data.get('reactions', {})
+                existing_msg.status = MessageStatus(data.get('status', 'sent'))
+                existing_msg.text = data.get('text', existing_msg.text)
+                existing_msg.is_edited = data.get('is_edited', False)
+
+                bubble = self.message_widgets.get(msg_id)
+                if bubble:
+                    bubble.update_message(existing_msg)
+                if from_uid == self.contact.uid or existing_msg.from_uid == self.contact.uid:
+                    need_refresh = True
+            else:
+                if change_type != "ADDED":
+                    continue
+                if from_uid != self.contact.uid:
+                    # Свои новые сообщения уже добавлены локально, повторно не вставляем.
+                    continue
+                has_new_incoming = True
+                need_refresh = True
+                message = Message.from_dict(data, msg_id)
+                self._add_message_widget_realtime(message)
+
+        if has_new_incoming:
+            QTimer.singleShot(50, self.scroll_to_bottom)
+        if need_refresh:
+            self.chat_updated.emit(self.contact.uid)
+
+    def _add_message_widget_realtime(self, message: Message):
+        """Упрощенная версия добавления виджета для реального времени"""
+        if message.id in self.message_widgets:
+            return
+
+        message.selection_enabled = self.selection_mode
+        message.is_selected = message.id in self.selected_message_ids
+        
+        bubble = MessageBubble(
+            message,
+            message.from_uid == self.current_user.uid,
+            current_user_uid=self.current_user.uid,
+            theme_name=getattr(self.current_user, "theme", "dark"),
+            parent=self.messages_container,
+        )
+        bubble.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        bubble.customContextMenuRequested.connect(lambda pos, msg_id=message.id, widget=bubble: self.show_message_menu(widget, pos, msg_id))
+        bubble.context_menu_requested.connect(lambda pos, msg_id=message.id, widget=bubble: self.show_message_menu(widget, pos, msg_id))
+        bubble.clicked.connect(self.on_bubble_clicked)
+        bubble.photo_requested.connect(self.open_photo_viewer)
+        bubble.reaction_clicked.connect(self.apply_reaction)
+        
+        count = self.messages_layout.count()
+        if count > 0:
+            stretch_item = self.messages_layout.itemAt(count - 1)
+            if stretch_item and stretch_item.spacerItem():
+                self.messages_layout.insertWidget(count - 1, bubble)
+            else:
+                self.messages_layout.addWidget(bubble)
+        else:
+            self.messages_layout.addWidget(bubble)
+            if self.empty_state.isVisible():
+                self.empty_state.hide()
+
+        self.messages.append(message)
+        self.message_widgets[message.id] = bubble
+
     def _add_message_widget(self, message: Message):
         message.selection_enabled = self.selection_mode
         message.is_selected = message.id in self.selected_message_ids
@@ -418,7 +546,6 @@ class ChatWidget(QWidget):
 
         menu = QMenu(self)
         
-        # ✅ ЖЕСТКИЙ ЦВЕТ ФОНА МЕНЮ (никакого черного!)
         menu.setStyleSheet(
             """
             QMenu {
@@ -447,7 +574,6 @@ class ChatWidget(QWidget):
             """
         )
         
-        # Загружаем иконки
         try:
             from src.utils.icons import get_icon
             reply_icon = get_icon("reply", "#CCCCCC", 14)
@@ -466,17 +592,14 @@ class ChatWidget(QWidget):
             edit_icon = QIcon()
             delete_icon = QIcon()
         
-        # Ответить
         reply_action = menu.addAction("Ответить")
         if not reply_icon.isNull():
             reply_action.setIcon(reply_icon)
         
-        # Закрепить
         pin_action = menu.addAction("Закрепить")
         if not pin_icon.isNull():
             pin_action.setIcon(pin_icon)
         
-        # Реакции (подменю)
         react_menu = menu.addMenu("Реакции")
         react_menu.setStyleSheet(menu.styleSheet())
         if not emoji_icon.isNull():
@@ -486,29 +609,24 @@ class ChatWidget(QWidget):
             action = react_menu.addAction(emoji)
             action.triggered.connect(lambda _, value=emoji, msg_id=message.id: self.apply_reaction(msg_id, value))
         
-        # Выбрать
         select_action = menu.addAction("Выбрать")
         if not check_icon.isNull():
             select_action.setIcon(check_icon)
         
-        # Переслать
         forward_action = menu.addAction("Переслать")
         if not forward_icon.isNull():
             forward_action.setIcon(forward_icon)
         
-        # Изменить (только свои сообщения)
         edit_action = None
         if message.from_uid == self.current_user.uid:
             edit_action = menu.addAction("Изменить")
             if not edit_icon.isNull():
                 edit_action.setIcon(edit_icon)
         
-        # Удалить
         delete_action = menu.addAction("Удалить")
         if not delete_icon.isNull():
             delete_action.setIcon(delete_icon)
         
-        # Анимация появления
         opacity_effect = QGraphicsOpacityEffect(menu)
         menu.setGraphicsEffect(opacity_effect)
         
@@ -542,44 +660,53 @@ class ChatWidget(QWidget):
             self.delete_selected_messages()
 
     def on_send_clicked(self):
-        text = self.input_field.toPlainText().strip()
-        if text:
-            self._send(text=text, message_type=MessageType.TEXT)
+        try:
+            text = self.input_field.toPlainText().strip()
+            if text:
+                self._send(text=text, message_type=MessageType.TEXT)
+        except Exception as exc:
+            print(f"Ошибка отправки сообщения (on_send_clicked): {exc}")
+            traceback.print_exc()
+            QMessageBox.warning(self, "Ошибка", "Не удалось отправить сообщение. Попробуйте ещё раз.")
 
     def _send(self, text: str, message_type: MessageType, file_url: str = "", file_name: str = "", file_size: int = 0, poll_options: list[str] | None = None):
-        message_id = send_message_record(
-            from_uid=self.current_user.uid,
-            to_uid=self.contact.uid,
-            text=text,
-            message_type=message_type,
-            file_url=file_url,
-            file_name=file_name,
-            file_size=file_size,
-            reply_to_id=self.replying_to.id if self.replying_to else "",
-            poll_options=poll_options or [],
-        )
-        if not message_id:
-            QMessageBox.warning(self, "Ошибка", "Не удалось отправить сообщение.")
-            return
+        try:
+            message_id = send_message_record(
+                from_uid=self.current_user.uid,
+                to_uid=self.contact.uid,
+                text=text,
+                message_type=message_type,
+                file_url=file_url,
+                file_name=file_name,
+                file_size=file_size,
+                reply_to_id=self.replying_to.id if self.replying_to else "",
+                poll_options=poll_options or [],
+            )
+            if not message_id:
+                QMessageBox.warning(self, "Ошибка", "Не удалось отправить сообщение.")
+                return
 
-        message = Message(
-            id=message_id,
-            from_uid=self.current_user.uid,
-            to_uid=self.contact.uid,
-            text=text,
-            message_type=message_type,
-            status=MessageStatus.SENT,
-            file_url=file_url,
-            file_name=file_name,
-            file_size=file_size,
-            reply_to_id=self.replying_to.id if self.replying_to else "",
-            poll_options=poll_options or [],
-        )
-        self._add_message_widget(message)
-        self.input_field.clear()
-        self.clear_reply()
-        QTimer.singleShot(50, self.scroll_to_bottom)
-        self.chat_updated.emit(self.contact.uid)
+            message = Message(
+                id=message_id,
+                from_uid=self.current_user.uid,
+                to_uid=self.contact.uid,
+                text=text,
+                message_type=message_type,
+                status=MessageStatus.SENT,
+                file_url=file_url,
+                file_name=file_name,
+                file_size=file_size,
+                reply_to_id=self.replying_to.id if self.replying_to else "",
+                poll_options=poll_options or [],
+            )
+            self._add_message_widget(message)
+            self.input_field.clear()
+            self.clear_reply()
+            QTimer.singleShot(50, self.scroll_to_bottom)
+        except Exception as exc:
+            print(f"Ошибка отправки сообщения (_send): {exc}")
+            traceback.print_exc()
+            QMessageBox.warning(self, "Ошибка", "Сообщение не отправлено из-за внутренней ошибки.")
 
     def reply_to_message(self, message: Message):
         self.replying_to = message
@@ -738,10 +865,14 @@ class ChatWidget(QWidget):
     def on_attach_clicked(self):
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_style())
-        photo_action = menu.addAction("📷 Фото")
-        video_action = menu.addAction("🎥 Видео")
-        poll_action = menu.addAction("📊 Опрос")
-        file_action = menu.addAction("📎 Файл")
+        photo_action = menu.addAction("Фото")
+        photo_action.setIcon(QIcon(self._attachment_icon_path("photo", "photo.svg")))
+        video_action = menu.addAction("Видео")
+        video_action.setIcon(QIcon(self._attachment_icon_path("video", "video.svg")))
+        poll_action = menu.addAction("Опрос")
+        poll_action.setIcon(QIcon(self._attachment_icon_path("poll", "check.svg")))
+        file_action = menu.addAction("Файл")
+        file_action.setIcon(QIcon(self._attachment_icon_path("file", "file.svg")))
         action = menu.exec(self.attach_btn.mapToGlobal(self.attach_btn.rect().bottomLeft()))
         if action == photo_action:
             self.attach_photo()
@@ -849,6 +980,18 @@ class ChatWidget(QWidget):
             return MessageType.VIDEO
         return MessageType.FILE
 
+    def _icons_root(self) -> str:
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icons")
+
+    def _attachment_icon_path(self, kind: str, fallback_name: str) -> str:
+        custom_dir = os.path.join(self._icons_root(), "custom")
+        base_name = f"attach_{kind}"
+        for ext in (".svg", ".png", ".webp", ".jpg", ".jpeg"):
+            candidate = os.path.join(custom_dir, f"{base_name}{ext}")
+            if os.path.exists(candidate):
+                return candidate
+        return os.path.join(self._icons_root(), fallback_name)
+
     def _menu_style(self):
         return f"""
         QMenu {{
@@ -881,6 +1024,20 @@ class ChatWidget(QWidget):
         }}
         """
 
+    def _attach_button_style(self):
+        return f"""
+        QPushButton {{
+            background-color: transparent;
+            color: {self.colors['icon_default']};
+            border: none;
+            border-radius: 999px;
+        }}
+        QPushButton:hover {{
+            background-color: rgba(255, 255, 255, 0.06);
+            color: {self.colors['text_primary']};
+        }}
+        """
+
     def _ghost_button_style(self, primary: bool = False):
         color = self.colors["accent_primary"] if primary else self.colors["text_secondary"]
         hover = self.colors["text_primary"] if not primary else self.colors["accent_hover"]
@@ -896,3 +1053,19 @@ class ChatWidget(QWidget):
             color: {hover};
         }}
         """
+
+    def closeEvent(self, event):
+        """✅ ВАЖНО: Останавливаем слушатель при закрытии чата"""
+        self.shutdown()
+        super().closeEvent(event)
+
+    def shutdown(self):
+        """Безопасно освобождает ресурсы перед удалением виджета."""
+        if self.messages_listener:
+            try:
+                self.messages_listener()
+            except Exception:
+                pass
+            self.messages_listener = None
+
+

@@ -1,6 +1,7 @@
-"""Working chat widget for Ten Dem."""
+﻿"""Working chat widget for Ten Dem."""
 from __future__ import annotations
 import os
+import traceback
 from PyQt6.QtCore import QEvent, QMimeData, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QKeyEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QStyle, QTextEdit, QVBoxLayout, QWidget
@@ -91,7 +92,7 @@ class ChatWidget(QWidget):
         self.messages_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.messages_scroll.setStyleSheet(
             f"""
-            QScrollArea {{ border: none; background: {self.colors['bg_secondary']}; border-radius: 28px; }}
+            QScrollArea {{ border: none; background: {self.colors['bg_secondary']}; border-radius: 28px 28px 0 0; }}
             QScrollBar:vertical {{ width: 10px; background: transparent; margin: 8px 6px 8px 0; }}
             QScrollBar::handle:vertical {{ background: {'rgba(25,25,28,0.16)' if self.current_user.theme == 'light' else 'rgba(255,255,255,0.18)'}; border-radius: 999px; min-height: 42px; }}
             QScrollBar::handle:vertical:hover {{ background: {'rgba(25,25,28,0.24)' if self.current_user.theme == 'light' else 'rgba(255,255,255,0.22)'}; }}
@@ -224,13 +225,13 @@ class ChatWidget(QWidget):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(12)
 
-        assets_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icons")
+        assets_root = self._icons_root()
 
         self.attach_btn = QPushButton()
         self.attach_btn.setFixedSize(42, 42)
         self.attach_btn.setIcon(QIcon(os.path.join(assets_root, "attach.svg")))
         self.attach_btn.setIconSize(QSize(18, 18))
-        self.attach_btn.setStyleSheet(self._icon_button_style())
+        self.attach_btn.setStyleSheet(self._attach_button_style())
         self.attach_btn.clicked.connect(self.on_attach_clicked)
         layout.addWidget(self.attach_btn)
 
@@ -414,24 +415,62 @@ class ChatWidget(QWidget):
 
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_style())
-        
-        # ✅ UNICODE ИКОНКИ ДЛЯ МЕНЮ
-        reply_action = menu.addAction("↩ Ответить")
-        pin_action = menu.addAction("📌 Закрепить")
-        react_menu = menu.addMenu("😊 Реакции")
+
+        try:
+            from src.utils.icons import get_icon
+            reply_icon = get_icon("reply", "#CCCCCC", 14)
+            pin_icon = get_icon("pin", "#CCCCCC", 14)
+            emoji_icon = get_icon("emoji", "#CCCCCC", 14)
+            check_icon = get_icon("check", "#CCCCCC", 14)
+            forward_icon = get_icon("forward", "#CCCCCC", 14)
+            edit_icon = get_icon("edit", "#CCCCCC", 14)
+            delete_icon = get_icon("delete", "#CCCCCC", 14)
+        except Exception:
+            reply_icon = QIcon()
+            pin_icon = QIcon()
+            emoji_icon = QIcon()
+            check_icon = QIcon()
+            forward_icon = QIcon()
+            edit_icon = QIcon()
+            delete_icon = QIcon()
+
+        reply_action = menu.addAction("Ответить")
+        if not reply_icon.isNull():
+            reply_action.setIcon(reply_icon)
+
+        pin_action = menu.addAction("Закрепить")
+        if not pin_icon.isNull():
+            pin_action.setIcon(pin_icon)
+
+        react_menu = menu.addMenu("Реакции")
         react_menu.setStyleSheet(self._menu_style())
-        
+        if not emoji_icon.isNull():
+            react_menu.setIcon(emoji_icon)
+
         for emoji in QUICK_REACTIONS:
             action = react_menu.addAction(emoji)
             action.triggered.connect(lambda _, value=emoji, msg_id=message.id: self.apply_reaction(msg_id, value))
-        
-        select_action = menu.addAction("✓ Выбрать")
-        forward_action = menu.addAction("→ Переслать")
-        edit_action = menu.addAction("✎ Изменить") if message.from_uid == self.current_user.uid else None
-        delete_action = menu.addAction("🗑 Удалить")
-        
+
+        select_action = menu.addAction("Выбрать")
+        if not check_icon.isNull():
+            select_action.setIcon(check_icon)
+
+        forward_action = menu.addAction("Переслать")
+        if not forward_icon.isNull():
+            forward_action.setIcon(forward_icon)
+
+        edit_action = None
+        if message.from_uid == self.current_user.uid:
+            edit_action = menu.addAction("Изменить")
+            if not edit_icon.isNull():
+                edit_action.setIcon(edit_icon)
+
+        delete_action = menu.addAction("Удалить")
+        if not delete_icon.isNull():
+            delete_action.setIcon(delete_icon)
+
         action = menu.exec(bubble.mapToGlobal(pos))
-        
+
         if action == reply_action:
             self.reply_to_message(message)
         elif action == pin_action:
@@ -452,44 +491,53 @@ class ChatWidget(QWidget):
             self.delete_selected_messages()
 
     def on_send_clicked(self):
-        text = self.input_field.toPlainText().strip()
-        if text:
-            self._send(text=text, message_type=MessageType.TEXT)
+        try:
+            text = self.input_field.toPlainText().strip()
+            if text:
+                self._send(text=text, message_type=MessageType.TEXT)
+        except Exception as exc:
+            print(f"Ошибка отправки сообщения (on_send_clicked): {exc}")
+            traceback.print_exc()
+            QMessageBox.warning(self, "Ошибка", "Не удалось отправить сообщение. Попробуйте ещё раз.")
 
     def _send(self, text: str, message_type: MessageType, file_url: str = "", file_name: str = "", file_size: int = 0, poll_options: list[str] | None = None):
-        message_id = send_message_record(
-            from_uid=self.current_user.uid,
-            to_uid=self.contact.uid,
-            text=text,
-            message_type=message_type,
-            file_url=file_url,
-            file_name=file_name,
-            file_size=file_size,
-            reply_to_id=self.replying_to.id if self.replying_to else "",
-            poll_options=poll_options or [],
-        )
-        if not message_id:
-            QMessageBox.warning(self, "Ошибка", "Не удалось отправить сообщение.")
-            return
+        try:
+            message_id = send_message_record(
+                from_uid=self.current_user.uid,
+                to_uid=self.contact.uid,
+                text=text,
+                message_type=message_type,
+                file_url=file_url,
+                file_name=file_name,
+                file_size=file_size,
+                reply_to_id=self.replying_to.id if self.replying_to else "",
+                poll_options=poll_options or [],
+            )
+            if not message_id:
+                QMessageBox.warning(self, "Ошибка", "Не удалось отправить сообщение.")
+                return
 
-        message = Message(
-            id=message_id,
-            from_uid=self.current_user.uid,
-            to_uid=self.contact.uid,
-            text=text,
-            message_type=message_type,
-            status=MessageStatus.SENT,
-            file_url=file_url,
-            file_name=file_name,
-            file_size=file_size,
-            reply_to_id=self.replying_to.id if self.replying_to else "",
-            poll_options=poll_options or [],
-        )
-        self._add_message_widget(message)
-        self.input_field.clear()
-        self.clear_reply()
-        QTimer.singleShot(50, self.scroll_to_bottom)
-        self.chat_updated.emit(self.contact.uid)
+            message = Message(
+                id=message_id,
+                from_uid=self.current_user.uid,
+                to_uid=self.contact.uid,
+                text=text,
+                message_type=message_type,
+                status=MessageStatus.SENT,
+                file_url=file_url,
+                file_name=file_name,
+                file_size=file_size,
+                reply_to_id=self.replying_to.id if self.replying_to else "",
+                poll_options=poll_options or [],
+            )
+            self._add_message_widget(message)
+            self.input_field.clear()
+            self.clear_reply()
+            QTimer.singleShot(50, self.scroll_to_bottom)
+        except Exception as exc:
+            print(f"Ошибка отправки сообщения (_send): {exc}")
+            traceback.print_exc()
+            QMessageBox.warning(self, "Ошибка", "Сообщение не отправлено из-за внутренней ошибки.")
 
     def reply_to_message(self, message: Message):
         self.replying_to = message
@@ -649,10 +697,14 @@ class ChatWidget(QWidget):
     def on_attach_clicked(self):
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_style())
-        photo_action = menu.addAction("📷 Фото")
-        video_action = menu.addAction("🎥 Видео")
-        poll_action = menu.addAction("📊 Опрос")
-        file_action = menu.addAction("📎 Файл")
+        photo_action = menu.addAction("Фото")
+        photo_action.setIcon(QIcon(self._attachment_icon_path("photo", "photo.svg")))
+        video_action = menu.addAction("Видео")
+        video_action.setIcon(QIcon(self._attachment_icon_path("video", "video.svg")))
+        poll_action = menu.addAction("Опрос")
+        poll_action.setIcon(QIcon(self._attachment_icon_path("poll", "check.svg")))
+        file_action = menu.addAction("Файл")
+        file_action.setIcon(QIcon(self._attachment_icon_path("file", "file.svg")))
         action = menu.exec(self.attach_btn.mapToGlobal(self.attach_btn.rect().bottomLeft()))
         if action == photo_action:
             self.attach_photo()
@@ -760,6 +812,18 @@ class ChatWidget(QWidget):
             return MessageType.VIDEO
         return MessageType.FILE
 
+    def _icons_root(self) -> str:
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icons")
+
+    def _attachment_icon_path(self, kind: str, fallback_name: str) -> str:
+        custom_dir = os.path.join(self._icons_root(), "custom")
+        base_name = f"attach_{kind}"
+        for ext in (".svg", ".png", ".webp", ".jpg", ".jpeg"):
+            candidate = os.path.join(custom_dir, f"{base_name}{ext}")
+            if os.path.exists(candidate):
+                return candidate
+        return os.path.join(self._icons_root(), fallback_name)
+
     def _menu_style(self):
         # ✅ ЗАКРУГЛЁННОЕ МЕНЮ С ТЁМНЫМ ФОНОМ
         return f"""
@@ -801,6 +865,20 @@ class ChatWidget(QWidget):
         }}
         """
 
+    def _attach_button_style(self):
+        return f"""
+        QPushButton {{
+            background-color: transparent;
+            color: {self.colors['icon_default']};
+            border: none;
+            border-radius: 999px;
+        }}
+        QPushButton:hover {{
+            background-color: rgba(255, 255, 255, 0.06);
+            color: {self.colors['text_primary']};
+        }}
+        """
+
     def _ghost_button_style(self, primary: bool = False):
         color = self.colors["accent_primary"] if primary else self.colors["text_secondary"]
         hover = self.colors["text_primary"] if not primary else self.colors["accent_hover"]
@@ -816,3 +894,5 @@ class ChatWidget(QWidget):
             color: {hover};
         }}
         """
+
+

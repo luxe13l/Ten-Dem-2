@@ -55,7 +55,22 @@ def _ensure_store():
 def load_store() -> Dict[str, Any]:
     with _LOCK:
         _ensure_store()
-        raw = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+        try:
+            raw = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            # Файл может быть поврежден после аварийного закрытия. Сохраняем бэкап и
+            # перезапускаем хранилище на дефолтных данных, чтобы UI не падал.
+            backup_path = _STORE_PATH.with_suffix(".corrupt.json")
+            try:
+                backup_path.write_text(_STORE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+            except Exception:
+                pass
+            _STORE_PATH.write_text(
+                json.dumps(_DEFAULT_DATA, ensure_ascii=False, indent=2, default=_json_default),
+                encoding="utf-8",
+            )
+            print(f"⚠️ local_store.json поврежден, выполнен сброс: {exc}")
+            raw = deepcopy(_DEFAULT_DATA)
         data = deepcopy(_DEFAULT_DATA)
         data.update(_restore(raw))
         return data

@@ -1,8 +1,9 @@
-﻿"""Registration wizard with real validation."""
+"""Registration wizard with real validation."""
 
 from __future__ import annotations
 
 import re
+import uuid
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -13,16 +14,15 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+    QMessageBox,
 )
 
 from src.database.auth_manager import auth_manager
-from src.database.users_db import get_user_by_phone
+from src.database.users_db import create_user, get_user_by_phone
 from src.ui.legal_agreement import LegalAgreementWindow
 
 
-# ✅ РАСШИРЕННЫЙ СПИСОК ЗАПРЕЩЁННЫХ СЛОВ
 PROFANITY_PARTS = (
-    # Русские маты
     "хуй", "хуе", "хуя", "хую", "хуем", "хуево",
     "еб", "ебал", "ебать", "ебуч", "ебан",
     "пизд", "пизда", "пизде", "пизду",
@@ -36,8 +36,6 @@ PROFANITY_PARTS = (
     "еблан", "ебало",
     "пидор", "педик",
     "уеб", "уебан",
-    
-    # Английские маты
     "fuck", "fucking", "fucker", "fucked",
     "shit", "shitty", "shitter",
     "bitch", "bitches",
@@ -47,8 +45,6 @@ PROFANITY_PARTS = (
     "pussy", "pussies",
     "cum", "cumming",
     "nigga", "nigger",
-    
-    # Спам и системные
     "spam", "scam", "fake",
     "admin", "system", "support",
     "ten dem", "tendem", "ten-dem",
@@ -56,10 +52,8 @@ PROFANITY_PARTS = (
 
 
 def contains_profanity(value: str) -> bool:
-    """Проверяет текст на наличие запрещённых слов."""
     lowered = (value or "").lower()
-    # Удаляем все не буквенные символы для лучшей проверки
-    cleaned = re.sub(r'[^a-zA-Zа-яА-ЯёЁ0-9]', '', lowered)
+    cleaned = re.sub(r"[^a-zA-Zа-яА-ЯёЁ0-9]", "", lowered)
     return any(part in lowered or part in cleaned for part in PROFANITY_PARTS)
 
 
@@ -112,6 +106,7 @@ def input_style() -> str:
 
 class PhoneStep(QWidget):
     next_step = pyqtSignal(str, bool)
+    test_login = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -158,7 +153,7 @@ class PhoneStep(QWidget):
 
         skip_btn = QPushButton("Тестовый вход")
         skip_btn.setStyleSheet("background: transparent; color: #9CA3AF; border: none; padding: 10px;")
-        skip_btn.clicked.connect(lambda: self.next_step.emit("skip", False))
+        skip_btn.clicked.connect(self.test_login.emit)
         layout.addWidget(skip_btn)
         layout.addStretch()
 
@@ -278,11 +273,23 @@ class CodeStep(QWidget):
         self.continue_btn.setEnabled(len(text.strip()) == 6 and text.strip().isdigit())
 
     def submit(self):
-        success, message, _phone = auth_manager.verify_code(self.verification_id, self.code_input.text().strip())
-        if success:
-            self.verified.emit()
-        else:
-            self.error_label.setText(message)
+        self.continue_btn.setEnabled(False)
+        self.continue_btn.setText("Проверка...")
+        QTimer.singleShot(100, self._do_verify)
+
+    def _do_verify(self):
+        try:
+            success, message, _phone = auth_manager.verify_code(self.verification_id, self.code_input.text().strip())
+            if success:
+                self.verified.emit()
+            else:
+                self.error_label.setText(message)
+                self.continue_btn.setEnabled(True)
+                self.continue_btn.setText("Подтвердить")
+        except Exception as exc:
+            self.error_label.setText(f"Ошибка сети: {exc}")
+            self.continue_btn.setEnabled(True)
+            self.continue_btn.setText("Подтвердить")
 
 
 class NameStep(QWidget):
@@ -329,9 +336,9 @@ class NameStep(QWidget):
     def validate(self):
         name = self.name_input.text().strip()
         surname = self.surname_input.text().strip()
-        valid = bool(re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", name)) and bool(
-            re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", surname)
-        )
+        valid_name = bool(re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", name))
+        valid_surname = surname == "" or bool(re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", surname))
+        valid = valid_name and valid_surname
         valid = valid and not contains_profanity(name) and not contains_profanity(surname)
         self.continue_btn.setEnabled(valid)
 
@@ -341,7 +348,7 @@ class NameStep(QWidget):
         if not re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", name):
             self.error_label.setText("Имя должно содержать только буквы")
             return
-        if not re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", surname):
+        if surname and not re.fullmatch(r"[A-Za-zА-Яа-яЁё]{2,20}", surname):
             self.error_label.setText("Фамилия должна содержать только буквы")
             return
         if contains_profanity(name) or contains_profanity(surname):
@@ -372,7 +379,7 @@ class UsernameStep(QWidget):
         title.setStyleSheet("color: white; font-size: 24px; font-weight: 700;")
         layout.addWidget(title)
 
-        subtitle = QLabel("Только латинские буквы и подчёркивание, без цифр")
+        subtitle = QLabel("Только латинские буквы и подчёркивание")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet("color: #9CA3AF; font-size: 13px;")
         layout.addWidget(subtitle)
@@ -407,26 +414,30 @@ class UsernameStep(QWidget):
         self.error_label.clear()
         if not text.strip():
             return
-        
-        # ✅ ПРОВЕРКА НА ПЛОХИЕ СЛОВА
+
         if contains_profanity(text):
             self.error_label.setText("Username содержит недопустимые слова")
             return
-        
-        valid, result = auth_manager.validate_username(text)
-        if not valid:
-            self.error_label.setText(result)
+
+        if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]{2,29}$", text):
+            if len(text) > 3:
+                self.error_label.setText("Только буквы, цифры и _ (минимум 3 символа)")
             return
-        self.status_label.setText("Проверяем username...")
+
+        self.status_label.setText("Проверяем доступность...")
         self.status_label.setStyleSheet("color: #9CA3AF; font-size: 12px;")
-        self.username_timer.start(350)
+        self.username_timer.start(500)
 
     def check_username(self):
+        text = self.username_input.text().strip()
+        if not text:
+            return
+
         try:
-            available, result = auth_manager.check_username_available(self.username_input.text().strip())
+            available, result = auth_manager.check_username_available(text)
             if available:
                 self.is_username_available = True
-                self.status_label.setText(f"@{result} доступен")
+                self.status_label.setText(f"@{result} доступен ✅")
                 self.status_label.setStyleSheet("color: #10B981; font-size: 12px;")
                 self.continue_btn.setEnabled(True)
             else:
@@ -434,17 +445,18 @@ class UsernameStep(QWidget):
                 self.status_label.clear()
                 self.continue_btn.setEnabled(False)
         except Exception as exc:
-            self.is_username_available = False
-            self.continue_btn.setEnabled(False)
-            self.status_label.clear()
-            self.error_label.setText("Не удалось проверить username")
-            print(f"Ошибка шага username: {exc}")
+            print(f"⚠️ Ошибка проверки юзернейма (сеть): {exc}")
+            self.is_username_available = True
+            self.status_label.setText("Не удалось проверить онлайн, продолжаем...")
+            self.status_label.setStyleSheet("color: #F59E0B; font-size: 12px;")
+            self.continue_btn.setEnabled(True)
 
     def submit(self):
-        if not self.is_username_available:
-            self.error_label.setText("Сначала дождитесь успешной проверки")
+        username = self.username_input.text().strip()
+        if not username:
+            self.error_label.setText("Введите username")
             return
-        self.next_step.emit(auth_manager.normalize_username(self.username_input.text().strip()))
+        self.next_step.emit(username.lower())
 
 
 class LoadingStep(QWidget):
@@ -454,9 +466,11 @@ class LoadingStep(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         label = QLabel("Создаём аккаунт")
         label.setStyleSheet("color: white; font-size: 22px; font-weight: 700;")
         layout.addWidget(label)
+
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedWidth(280)
@@ -467,6 +481,7 @@ class LoadingStep(QWidget):
             """
         )
         layout.addWidget(self.progress)
+
         self.timer = QTimer()
         self.timer.timeout.connect(self.tick)
         self.value = 0
@@ -518,6 +533,7 @@ class RegistrationWizard(QWidget):
         self.stack.addWidget(self.loading_step)
 
         self.phone_step.next_step.connect(self.on_phone_submitted)
+        self.phone_step.test_login.connect(self.on_test_login)
         self.code_step.verified.connect(self.on_code_verified)
         self.code_step.back_step.connect(lambda: self.stack.setCurrentWidget(self.phone_step))
         self.name_step.next_step.connect(self.on_name_submitted)
@@ -525,11 +541,15 @@ class RegistrationWizard(QWidget):
         self.loading_step.finished.connect(self.on_loading_finished)
 
     def on_phone_submitted(self, phone: str, is_login: bool):
-        if phone == "skip":
-            self.registration_complete.emit(
-                {"uid": "test_user", "phone": "+79990000000", "name": "Тестовый", "username": "testuser"}
-            )
+        existing_user = get_user_by_phone(phone)
+        if not is_login and existing_user:
+            self.phone_step.error_label.setText("Аккаунт с этим номером уже существует. Нажмите «Войти».")
             return
+        if is_login and not existing_user:
+            self.phone_step.error_label.setText("Аккаунт с этим номером не найден. Нажмите «Создать аккаунт».")
+            return
+
+        self.phone_step.error_label.clear()
         self.phone = phone
         self.is_login_mode = is_login
         success, message, verification_id = auth_manager.send_verification_code(phone)
@@ -539,11 +559,66 @@ class RegistrationWizard(QWidget):
         self.code_step.setup(phone, verification_id)
         self.stack.setCurrentWidget(self.code_step)
 
+    def on_test_login(self):
+        self.is_login_mode = False
+        self.phone = ""
+        self.user_data = {}
+
+        try:
+            test_phone = "79990000000"
+            existing_user = get_user_by_phone(test_phone)
+            if existing_user:
+                self.registration_complete.emit(
+                    {
+                        "uid": existing_user.get("uid", ""),
+                        "phone": existing_user.get("phone", test_phone),
+                        "name": existing_user.get("name", "Тестовый пользователь"),
+                        "surname": existing_user.get("surname", ""),
+                        "username": existing_user.get("username", "test_user"),
+                        "bio": existing_user.get("bio", ""),
+                    }
+                )
+                return
+
+            test_uid = f"test-user-{uuid.uuid4().hex[:8]}"
+            created_uid = create_user(
+                {
+                    "uid": test_uid,
+                    "phone": test_phone,
+                    "name": "Тестовый пользователь",
+                    "surname": "",
+                    "username": "test_user",
+                    "bio": "",
+                    "avatar_url": "",
+                    "status": "online",
+                }
+            )
+            self.registration_complete.emit(
+                {
+                    "uid": created_uid or test_uid,
+                    "phone": test_phone,
+                    "name": "Тестовый пользователь",
+                    "surname": "",
+                    "username": "test_user",
+                    "bio": "",
+                }
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Ошибка тестового входа", f"Не удалось выполнить вход через сервер: {exc}")
+
     def on_code_verified(self):
+        if not self.phone:
+            self.code_step.error_label.setText("Сначала введите номер телефона")
+            self.code_step.continue_btn.setEnabled(True)
+            self.code_step.continue_btn.setText("Подтвердить")
+            return
+
         if self.is_login_mode:
             user_data = get_user_by_phone(self.phone)
             if not user_data:
                 self.code_step.error_label.setText("Аккаунт с этим номером не найден")
+                self.code_step.continue_btn.setEnabled(True)
+                self.code_step.continue_btn.setText("Подтвердить")
                 return
             self.registration_complete.emit(
                 {
@@ -554,6 +629,7 @@ class RegistrationWizard(QWidget):
                 }
             )
             return
+
         self.stack.setCurrentWidget(self.name_step)
 
     def on_name_submitted(self, data: dict):
